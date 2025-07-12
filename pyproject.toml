@@ -20,6 +20,8 @@ dependencies = [
 autopep8 = "^2.3.2"
 pylint = "^3.3.7"
 mypy = "^1.16.1"
+types-requests = "^2.32.4.20250611"
+isort = "^6.0.1"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
