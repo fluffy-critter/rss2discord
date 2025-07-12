@@ -105,17 +105,21 @@ class DiscordRSS:
 
     def process_entry(self, options, config, feed, entry):
         """ Process a feed entry """
-        text = [
-            f'[{feed.title}]({feed.link}): [{entry.title}]({entry.link})\n']
-        if config.include_summary and entry.summary:
-            text.append(html_to_markdown.convert_to_markdown(entry.summary))
-            text.append(f'-# [Read more...](<{entry.link}>)')
-
-        payload = {'content': '\n'.join(text)}
+        payload = {}
         if config.username:
             payload['username'] = config.username
         if config.avatar_url:
             payload['avatar_url'] = config.avatar_url
+
+        text = [
+            f'## [{feed.title}]({feed.link}): [{entry.title}]({entry.link})\n']
+        if config.include_summary:
+            if entry.summary:
+                text.append(html_to_markdown.convert_to_markdown(entry.summary))
+            text.append(f'-# [Read more...](<{entry.link}>)')
+            payload['flags'] = 4
+
+        payload['content'] = '\n'.join(text)
 
         if options.dry_run:
             LOGGER.info("Dry-run; not sending entry: %s", payload)
