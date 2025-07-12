@@ -1,3 +1,3 @@
 """ Current git-based version """
 
-__version__ = "0.1.1-local"
+__version__ = "0.1.1"
