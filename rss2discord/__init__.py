@@ -112,7 +112,7 @@ class DiscordRSS:
             payload['avatar_url'] = config.avatar_url
 
         text = [
-            f'## [{feed.title}]({feed.link}): [{entry.title}]({entry.link})\n']
+            f'## [{feed.title}](<{feed.link}>): [{entry.title}]({entry.link})\n']
         if config.include_summary:
             if entry.summary:
                 text.append(
