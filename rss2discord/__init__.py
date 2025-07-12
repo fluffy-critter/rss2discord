@@ -115,7 +115,8 @@ class DiscordRSS:
             f'## [{feed.title}]({feed.link}): [{entry.title}]({entry.link})\n']
         if config.include_summary:
             if entry.summary:
-                text.append(html_to_markdown.convert_to_markdown(entry.summary))
+                text.append(
+                    html_to_markdown.convert_to_markdown(entry.summary))
             text.append(f'-# [Read more...](<{entry.link}>)')
             payload['flags'] = 4
 
