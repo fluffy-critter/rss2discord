@@ -56,17 +56,18 @@ def parse_config(config):
 def to_markdown(html):
     """ Convenient wrapper for Discord-friendly Markdown conversion """
     return html_to_markdown.convert_to_markdown(html,
-        strip_newlines=True,
-        escape_misc=False,
-        wrap=False,
-        bullets='*',
-        strip=['img']).strip()
+                                                strip_newlines=True,
+                                                escape_misc=False,
+                                                wrap=False,
+                                                bullets='*',
+                                                strip=['img']).strip()
+
 
 def get_content(entry):
     """ Get the item content from some feed text; returns the Markdown and
     a list of image attachments """
 
-    # extract the images
+    # extract the images (content priority)
     if 'content' in entry:
         html = entry.content[0].value
     elif 'summary' in entry:
@@ -77,11 +78,13 @@ def get_content(entry):
     images = [urllib.parse.urljoin(entry.link, img['src'])
               for img in soup.find_all('img', src=True)]
 
-    # convert the text
+    # convert the text (summary priority)
     if 'summary' in entry:
         md_text = to_markdown(entry.summary)
     elif 'content' in entry:
         md_text = to_markdown(entry.content[0].value)
+    else:
+        md_text = ''
 
     return md_text, images
 
