@@ -53,6 +53,15 @@ def parse_config(config):
                       )
 
 
+def to_markdown(html):
+    """ Convenient wrapper for Discord-friendly Markdown conversion """
+    return html_to_markdown.convert_to_markdown(html,
+        strip_newlines=True,
+        escape_misc=False,
+        wrap=False,
+        bullets='*',
+        strip=['img']).strip()
+
 def get_content(entry):
     """ Get the item content from some feed text; returns the Markdown and
     a list of image attachments """
@@ -69,11 +78,10 @@ def get_content(entry):
               for img in soup.find_all('img', src=True)]
 
     # convert the text
-    md_text = html_to_markdown.convert_to_markdown(
-        entry.summary,
-        strip_newlines=True,
-        escape_misc=False,
-        strip=['img']).strip()
+    if 'summary' in entry:
+        md_text = to_markdown(entry.summary)
+    elif 'content' in entry:
+        md_text = to_markdown(entry.content[0].value)
 
     return md_text, images
 
@@ -144,7 +152,7 @@ class DiscordRSS:
 
         md_text, images = get_content(entry)
 
-        text = f'## [{entry.title}]({entry.link})'
+        text = f'## [{to_markdown(entry.title)}]({entry.link})'
         if config.include_summary:
             text += f'\n{md_text}\n-# [Read more...](<{entry.link}>)'
 
@@ -153,7 +161,7 @@ class DiscordRSS:
             'url': entry.link,
             'author': {
                 'url': feed.link,
-                'name': feed.title,
+                'name': to_markdown(feed.title),
             },
             'description': text,
         }
