@@ -2,4 +2,3 @@
 __pycache__/
 *.db
 dist/
-__version__.py
