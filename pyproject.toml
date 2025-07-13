@@ -15,6 +15,14 @@ dependencies = [
     "beautifulsoup4 (>=4.13.4,<5.0.0)",
 ]
 
+[project.urls]
+homepage = "https://github.com/fluffy-critter/rss2discord"
+issues = "https://github.com/fluffy-critter/rss2discord/issues"
+sponsor = "https://github.com/sponsors/fluffy-critter"
+funding = "https://ko-fi.com/fluffycritter"
+mastodon = "https://plush.city/@fluffy"
+discord = "https://beesbuzz.biz/discord"
+
 [tool.poetry]
 include = [
     { path = "rss2discord/__version__.py", format = ["sdist", "wheel"] }
