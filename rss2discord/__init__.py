@@ -4,6 +4,7 @@ import argparse
 import collections
 import json
 import logging
+import re
 
 import atomicwrites
 import feedparser
@@ -112,15 +113,19 @@ class DiscordRSS:
             payload['avatar_url'] = config.avatar_url
 
         text = [
-            f'## [{feed.title}](<{feed.link}>): [{entry.title}]({entry.link})\n']
+            f'## [{feed.title}](<{feed.link}>): [{entry.title}]({entry.link})']
         if config.include_summary:
             if entry.summary:
+                LOGGER.debug("Summary: %s", entry.summary)
                 text.append(
-                    html_to_markdown.convert_to_markdown(entry.summary))
+                    html_to_markdown.convert_to_markdown(
+                        entry.summary,
+                        strip_newlines=True,
+                        escape_misc=False).strip())
             text.append(f'-# [Read more...](<{entry.link}>)')
             payload['flags'] = 4
 
-        payload['content'] = '\n'.join(text)
+        payload['content'] = '\n'.join(text).strip()
 
         if options.dry_run:
             LOGGER.info("Dry-run; not sending entry: %s", payload)
