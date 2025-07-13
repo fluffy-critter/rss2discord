@@ -5,11 +5,14 @@ import collections
 import json
 import logging
 import re
+import typing
+import urllib.parse
 
 import atomicwrites
 import feedparser
 import html_to_markdown
 import requests
+from bs4 import BeautifulSoup
 
 from . import __version__
 
@@ -46,6 +49,25 @@ def parse_config(config):
                       config.get('username'),
                       config.get('avatar_url'),
                       config.get('include_summary', False))
+
+
+def get_content(entry):
+    """ Get the item content from some feed text; returns the Markdown and
+    a list of image attachments """
+
+    # extract the images
+    soup = BeautifulSoup(entry.content[0].value, features="html.parser")
+    images = [urllib.parse.urljoin(entry.link, img['src'])
+              for img in soup.find_all('img', src=True)]
+
+    # convert the text
+    md_text = html_to_markdown.convert_to_markdown(
+        entry.summary,
+        strip_newlines=True,
+        escape_misc=False,
+        strip=['img']).strip()
+
+    return md_text, images
 
 
 class DiscordRSS:
@@ -117,11 +139,8 @@ class DiscordRSS:
         if config.include_summary:
             if entry.summary:
                 LOGGER.debug("Summary: %s", entry.summary)
-                text.append(
-                    html_to_markdown.convert_to_markdown(
-                        entry.summary,
-                        strip_newlines=True,
-                        escape_misc=False).strip())
+                md_text, _ = get_content(entry)
+                text.append(md_text)
             text.append(f'-# [Read more...](<{entry.link}>)')
             payload['flags'] = 4
 
@@ -131,6 +150,7 @@ class DiscordRSS:
             LOGGER.info("Dry-run; not sending entry: %s", payload)
             return False
 
+        LOGGER.debug("Posting entry: %s", payload)
         request = requests.post(self.webhook,
                                 headers={'Content-Type': 'application/json'},
                                 json=payload,
