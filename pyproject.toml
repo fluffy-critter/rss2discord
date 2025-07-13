@@ -1,6 +1,6 @@
 [project]
 name = "rss2discord"
-version = "0.2.4"
+version = "0.2.5"
 description = "A bot for feeding RSS feeds to Discord channels"
 authors = [
     {name = "fluffy",email = "fluffy@beesbuzz.biz"}
@@ -14,11 +14,11 @@ dependencies = [
     "requests (>=2.32.4,<3.0.0)",
     "beautifulsoup4 (>=4.13.4,<5.0.0)",
 ]
+
+[tool.poetry]
 include = [
     "rss2discord/__version__.py"
 ]
-
-[tool.poetry]
 
 [tool.poetry.group.dev.dependencies]
 autopep8 = "^2.3.2"
