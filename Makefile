@@ -44,5 +44,5 @@ clean:
 	find . -name __pycache__ -print0 | xargs -0 rm -r
 
 .PHONY: upload
-upload: clean build
+upload: clean setup build
 	poetry publish
