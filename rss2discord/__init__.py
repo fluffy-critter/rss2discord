@@ -55,6 +55,8 @@ def parse_config(config):
 
 def to_markdown(html):
     """ Convenient wrapper for Discord-friendly Markdown conversion """
+    if not html:
+        return ''
     return html_to_markdown.convert_to_markdown(html,
                                                 strip_newlines=True,
                                                 escape_misc=False,
@@ -79,9 +81,9 @@ def get_content(entry):
               for img in soup.find_all('img', src=True)]
 
     # convert the text (summary priority)
-    if 'summary' in entry:
+    if 'summary' in entry and entry.summary:
         md_text = to_markdown(entry.summary)
-    elif 'content' in entry:
+    elif 'content' in entry and entry.content[0].value:
         md_text = to_markdown(entry.content[0].value)
     else:
         md_text = ''
@@ -121,7 +123,11 @@ class DiscordRSS:
 
         for feed in self.feeds:
             LOGGER.debug("Processing feed %s", feed.feed_url)
-            self.process_feed(options, feed)
+            try:
+                self.process_feed(options, feed)
+            except Exception as error:  # pylint:disable=broad-exception-caught
+                LOGGER.exception(
+                    "Got error processing feed %s: %s", feed.feed_url, error)
 
         if self.database_file and not options.dry_run:
             LOGGER.debug("Writing database %s", self.database_file)
@@ -142,8 +148,12 @@ class DiscordRSS:
             if entry.id not in self.database:
                 LOGGER.info("Found new entry: %s", entry.id)
 
-                if options.populate or self.process_entry(options, feed, data.feed, entry):
-                    self.database.add(entry.id)
+                try:
+                    if options.populate or self.process_entry(options, feed, data.feed, entry):
+                        self.database.add(entry.id)
+                except Exception as error:  # pylint:disable=broad-exception-caught
+                    LOGGER.exception(
+                        "Got error processing entry %s: %s", entry.link, error)
 
     def process_entry(self, options, config, feed, entry):
         """ Process a feed entry """
