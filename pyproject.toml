@@ -1,6 +1,6 @@
 [project]
 name = "rss2discord"
-version = "0.2.5"
+version = "0.2.6"
 description = "A bot for feeding RSS feeds to Discord channels"
 authors = [
     {name = "fluffy",email = "fluffy@beesbuzz.biz"}
@@ -17,7 +17,7 @@ dependencies = [
 
 [tool.poetry]
 include = [
-    "rss2discord/__version__.py"
+    { path = "rss2discord/__version__.py", format = ["sdist", "wheel"] }
 ]
 
 [tool.poetry.group.dev.dependencies]
