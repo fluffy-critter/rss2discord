@@ -58,7 +58,13 @@ def get_content(entry):
     a list of image attachments """
 
     # extract the images
-    soup = BeautifulSoup(entry.content[0].value, features="html.parser")
+    if 'content' in entry:
+        html = entry.content[0].value
+    elif 'summary' in entry:
+        html = entry.summary
+    else:
+        html = ''
+    soup = BeautifulSoup(html, features="html.parser")
     images = [urllib.parse.urljoin(entry.link, img['src'])
               for img in soup.find_all('img', src=True)]
 
