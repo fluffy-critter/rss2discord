@@ -24,11 +24,13 @@ Then, for each webhook, create a `.json` file with the following format:
     "username": "RSS Bot",
     "avatar_url": "https://example.com/bot.png",
     "include_summary": true,
+    "include_image": false,
 
     "feeds": [{
         "feed_url": "https://example.com/feed",
         "username": "Example Feed",
-        "avatar_url": "https://example.com/image.png"
+        "avatar_url": "https://example.com/image.png",
+        "include_image": true
     }, {
         "feed_url": "https://example.com/another_feed",
         "avatar_url": "https://example.com/another_image.png",
@@ -45,11 +47,13 @@ The schema is pretty basic; at the top level, the following keys are supported:
 * `webhook`: the webhook URL (i.e. the channel to post to)
 * `database`: The path to the file to store the information about already-seen entries
 * `username`: The display name to use for the posting bot (will default to the webhook name)
-* `avatar_url`: An image to use as the post avatar (will default to the standard app icon)
-* `include_summary`: Whether to put the feed's summary text into the Discord post; if the summary is shown, then the OpenGraph card will be suppressed, and vice-versa
+* `avatar_url`: An image to use as the post avatar (will default to the webhook's icon)
+* `include_summary`: Whether to put the feed's summary text into the preview (defaults to `true`)
+* `include_image`: Whether to include the primary entry image into the preview (defaults to `true`)
+
 * `feeds`: A list of feeds to send to the channel. A feed can be just a URL, or it can be a configuration blob with the following values:
     * `feed_url`: The URL to the feed
-    * `username`, `avatar_url`, `include_summary`: Overrides the top-level configuration
+    * `username`, `avatar_url`, `include_summary`, `include_image`: Overrides the top-level configuration
 
 Only `webhook` is required, but `database` is *strongly* recommended.
 

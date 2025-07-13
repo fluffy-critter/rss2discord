@@ -40,7 +40,7 @@ def parse_arguments():
 
 
 FeedConfig = collections.namedtuple(
-    'FeedConfig', ['feed_url', 'username', 'avatar_url', 'include_summary'])
+    'FeedConfig', ['feed_url', 'username', 'avatar_url', 'include_summary', 'include_image'])
 
 
 def parse_config(config):
@@ -48,7 +48,9 @@ def parse_config(config):
     return FeedConfig(config.get('feed_url'),
                       config.get('username'),
                       config.get('avatar_url'),
-                      config.get('include_summary', False))
+                      config.get('include_summary', True),
+                      config.get('include_image', True),
+                      )
 
 
 def get_content(entry):
@@ -134,17 +136,36 @@ class DiscordRSS:
         if config.avatar_url:
             payload['avatar_url'] = config.avatar_url
 
-        text = [
-            f'## [{feed.title}](<{feed.link}>): [{entry.title}]({entry.link})']
-        if config.include_summary:
-            if entry.summary:
-                LOGGER.debug("Summary: %s", entry.summary)
-                md_text, _ = get_content(entry)
-                text.append(md_text)
-            text.append(f'-# [Read more...](<{entry.link}>)')
-            payload['flags'] = 4
+        md_text, images = get_content(entry)
 
-        payload['content'] = '\n'.join(text).strip()
+        text = f'## [{entry.title}]({entry.link})'
+        if config.include_summary:
+            text += f'\n{md_text}\n-# [Read more...](<{entry.link}>)'
+
+        embed = {
+            'type': 'rich',
+            'url': entry.link,
+            'author': {
+                'url': feed.link,
+                'name': feed.title,
+            },
+            'description': text,
+        }
+
+        if config.include_image:
+            if 'media_content' in entry:
+                for item in entry.media_content:
+                    if item['medium'] == 'image':
+                        embed['image'] = {
+                            'url': item['url'],
+                            'height': int(item['height']) if 'height' in item else None,
+                            'width': int(item['width']) if 'width' in item else None,
+                        }
+                    break
+            elif images:
+                embed['image'] = {'url': images[0]}
+
+        payload['embeds'] = [embed]
 
         if options.dry_run:
             LOGGER.info("Dry-run; not sending entry: %s", payload)
