@@ -14,7 +14,7 @@ import html_to_markdown
 import requests
 from bs4 import BeautifulSoup
 
-from . import __version__
+from .__version__ import __version__
 
 LOG_LEVELS = [logging.WARNING, logging.INFO, logging.DEBUG]
 LOGGER = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ def parse_arguments():
     parser.add_argument("-v", "--verbosity", action="count",
                         help="Increase output logging level", default=0)
     parser.add_argument("--version", action="version",
-                        version=f"%(prog)s {__version__.__version__}")
+                        version=f"%(prog)s {__version__}")
 
     return parser.parse_args()
 
