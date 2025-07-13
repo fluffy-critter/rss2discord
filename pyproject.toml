@@ -1,6 +1,6 @@
 [project]
 name = "rss2discord"
-version = "0.2.3"
+version = "0.2.4"
 description = "A bot for feeding RSS feeds to Discord channels"
 authors = [
     {name = "fluffy",email = "fluffy@beesbuzz.biz"}
@@ -13,6 +13,9 @@ dependencies = [
     "atomicwrites (>=1.4.1,<2.0.0)",
     "requests (>=2.32.4,<3.0.0)",
     "beautifulsoup4 (>=4.13.4,<5.0.0)",
+]
+include = [
+    "rss2discord/__version__.py"
 ]
 
 [tool.poetry]
