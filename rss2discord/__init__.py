@@ -57,12 +57,14 @@ def to_markdown(html):
     """ Convenient wrapper for Discord-friendly Markdown conversion """
     if not html:
         return ''
-    return html_to_markdown.convert_to_markdown(html,
-                                                strip_newlines=True,
-                                                escape_misc=False,
-                                                wrap=False,
-                                                bullets='*',
-                                                strip=['img']).strip()
+    return html_to_markdown.convert_to_markdown(
+        html,
+        heading_style='atx',
+        strip_newlines=True,
+        escape_misc=False,
+        wrap=False,
+        bullets='*',
+        strip=['img']).strip().replace('\t', '  ')
 
 
 def get_content(entry):
