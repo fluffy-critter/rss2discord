@@ -16,7 +16,7 @@ pylint:
 
 .PHONY: mypy
 mypy:
-	poetry run mypy -p rss2discord --ignore-missing-imports
+	poetry run mypy -p rss2discord --ignore-missing-imports --check-untyped-defs
 
 .PHONY: preflight
 preflight:

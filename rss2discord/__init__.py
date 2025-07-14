@@ -2,6 +2,7 @@
 
 import argparse
 import collections
+import datetime
 import json
 import logging
 import re
@@ -20,7 +21,7 @@ LOG_LEVELS = [logging.WARNING, logging.INFO, logging.DEBUG]
 LOGGER = logging.getLogger(__name__)
 
 
-def parse_arguments():
+def parse_arguments(args=None):
     """ Parse the commandline arguments """
     parser = argparse.ArgumentParser(
         "rss2discord", description="Forward RSS feeds to a Discord webhook")
@@ -35,8 +36,11 @@ def parse_arguments():
                         help="Increase output logging level", default=0)
     parser.add_argument("--version", action="version",
                         version=f"%(prog)s {__version__.__version__}")
+    parser.add_argument("--max-age", '-m', type=int,
+                        help="Maximum age of items to keep in the database" +
+                        " (0 to keep forever)", default=30)
 
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 FeedConfig = collections.namedtuple(
@@ -67,7 +71,7 @@ def to_markdown(html):
         strip=['img']).strip().replace('\t', '  ')
 
 
-def get_content(entry):
+def get_content(entry: feedparser.util.FeedParserDict) -> typing.Tuple[str, typing.List[str]]:
     """ Get the item content from some feed text; returns the Markdown and
     a list of image attachments """
 
@@ -79,8 +83,10 @@ def get_content(entry):
     else:
         html = ''
     soup = BeautifulSoup(html, features="html.parser")
-    images = [urllib.parse.urljoin(entry.link, img['src'])
-              for img in soup.find_all('img', src=True)]
+    images = [
+        urllib.parse.urljoin(entry.link,
+                             img.get('src', ''))  # type:ignore
+        for img in soup.find_all('img', src=True)]
 
     # convert the text (summary priority)
     if 'summary' in entry and entry.summary:
@@ -96,7 +102,7 @@ def get_content(entry):
 class DiscordRSS:
     """ Discord RSS agent """
 
-    def __init__(self, config):
+    def __init__(self, config: dict):
         """ Set up the Discord RSS agent """
         self.webhook = config['webhook']
 
@@ -106,22 +112,61 @@ class DiscordRSS:
                       else defaults._replace(**feed)
                       for feed in config['feeds']]
         self.database_file = config.get('database', '')
-        self.database = set()
+        self.database = {}
 
         LOGGER.debug("Initialized RSS agent; feeds=%s database=%s",
                      self.feeds,
                      self.database_file)
 
-    def process(self, options):
-        """ Process all of the configured feeds """
         if self.database_file:
             try:
                 with open(self.database_file, 'r', encoding='utf-8') as file:
-                    self.database = set(
-                        line.strip() for line in file.readlines())
+                    dbtext = file.read()
+                    try:
+                        self.database = json.loads(dbtext)
+                    except json.decoder.JSONDecodeError:
+                        # convert old db format to JSON
+                        LOGGER.info("Converting old-format database %s",
+                                    self.database_file)
+                        self.database = {
+                            line.strip(): {
+                                'last_seen': datetime.datetime.now().timestamp()
+                            }
+                            for line in dbtext.splitlines()}
             except FileNotFoundError:
                 LOGGER.info("Database file %s not found, will create later",
                             self.database_file)
+
+    def flushdb(self, options: argparse.Namespace):
+        """ flush the database to storage """
+        if options.max_age > 0:
+            count = len(self.database)
+
+            cutoff = (datetime.datetime.now() -
+                      datetime.timedelta(days=options.max_age)).timestamp()
+
+            LOGGER.debug("now=%d cutoff=%d",
+                         datetime.datetime.now().timestamp(),
+                         cutoff)
+
+            self.database = {
+                item: data for item, data in self.database.items()
+                if 'last_seen' in data and data['last_seen'] > cutoff
+            }
+            LOGGER.info("Purged %d old items from database",
+                        count - len(self.database))
+
+        if self.database_file and not options.dry_run:
+            LOGGER.debug("Writing database %s", self.database_file)
+            with atomicwrites.atomic_write(self.database_file,
+                                           encoding='utf-8',
+                                           overwrite=True) as file:
+                json.dump(self.database, file, indent=3)
+                LOGGER.info("Saved database %s with %d items",
+                            self.database_file, len(self.database))
+
+    def process(self, options: argparse.Namespace):
+        """ Process all of the configured feeds """
 
         for feed in self.feeds:
             LOGGER.debug("Processing feed %s", feed.feed_url)
@@ -131,12 +176,9 @@ class DiscordRSS:
                 LOGGER.exception(
                     "Got error processing feed %s: %s", feed.feed_url, error)
 
-        if self.database_file and not options.dry_run:
-            LOGGER.debug("Writing database %s", self.database_file)
-            with atomicwrites.atomic_write(self.database_file, overwrite=True) as file:
-                file.write('\n'.join(self.database))
+        self.flushdb(options)
 
-    def process_feed(self, options, feed: FeedConfig):
+    def process_feed(self, options: argparse.Namespace, feed: FeedConfig):
         """ Process a specific feed """
         data = feedparser.parse(feed.feed_url)
 
@@ -148,17 +190,35 @@ class DiscordRSS:
 
         for entry in data.entries:
             if entry.id not in self.database:
+                self.database[entry.id] = {}
+            row = self.database[entry.id]
+            row['url'] = entry.link
+
+            now = datetime.datetime.now().timestamp()
+            row['last_seen'] = now
+
+            if not row.get('sent'):
                 LOGGER.info("Found new entry: %s", entry.id)
 
                 try:
-                    if options.populate or self.process_entry(options, feed, data.feed, entry):
-                        self.database.add(entry.id)
+                    if options.populate:
+                        row['sent'] = True
+                    elif self.process_entry(options, feed, data.feed, entry, row):
+                        row['sent'] = now
                 except Exception as error:  # pylint:disable=broad-exception-caught
                     LOGGER.exception(
                         "Got error processing entry %s: %s", entry.link, error)
+                    row['last_exception'] = {
+                        'error': error,
+                        'time': now
+                    }
 
-    def process_entry(self, options, config, feed, entry):
-        """ Process a feed entry """
+    def process_entry(self, options: argparse.Namespace, config: FeedConfig,
+                      feed: feedparser.util.FeedParserDict,
+                      entry: feedparser.util.FeedParserDict,
+                      row: dict) -> bool:
+        """ Process a feed entry; returns if it was successful """
+        # pylint:disable=too-many-arguments,too-many-positional-arguments
         payload = {}
         if config.username:
             payload['username'] = config.username
@@ -184,15 +244,15 @@ class DiscordRSS:
         if config.include_image:
             if 'media_content' in entry:
                 for item in entry.media_content:
-                    if item['medium'] == 'image':
-                        embed['image'] = {
+                    medium = item['medium']
+                    if medium in ('image', 'thumbnail') and medium not in embed:
+                        embed[item['medium']] = {
                             'url': item['url'],
                             'height': int(item['height']) if 'height' in item else None,
                             'width': int(item['width']) if 'width' in item else None,
                         }
-                    break
             elif images:
-                embed['image'] = {'url': images[0]}
+                embed['thumbnail'] = {'url': images[0]}
 
         payload['embeds'] = [embed]
 
@@ -211,6 +271,11 @@ class DiscordRSS:
             return True
 
         LOGGER.warning("Got error %d: %s", request.status_code, request.text)
+        if 'errors' not in row:
+            row['errors'] = []
+        row['errors'].push({'code': request.status_code,
+                            'text': request.text,
+                            'when': datetime.datetime.now().timestamp()})
         return False
 
 
