@@ -20,6 +20,8 @@ from . import __version__
 LOG_LEVELS = [logging.WARNING, logging.INFO, logging.DEBUG]
 LOGGER = logging.getLogger(__name__)
 
+ImageSpec = typing.Tuple[str, typing.Optional[int], typing.Optional[int]]
+
 
 def parse_arguments(args=None):
     """ Parse the commandline arguments """
@@ -71,7 +73,19 @@ def to_markdown(html):
         strip=['img']).strip().replace('\t', '  ')
 
 
-def get_content(entry: feedparser.util.FeedParserDict) -> typing.Tuple[str, typing.List[str]]:
+def parse_int(text: typing.Optional[str]) -> typing.Optional[int]:
+    """ parse an optional string into an optional int """
+    if text:
+        return int(text)
+    return None
+
+
+def filter_undefined(item: dict) -> dict:
+    """ filter out undefined dict entries """
+    return {k: v for k, v in item.items() if v is not None}
+
+
+def get_content(entry: feedparser.util.FeedParserDict) -> typing.Tuple[str, typing.List[ImageSpec]]:
     """ Get the item content from some feed text; returns the Markdown and
     a list of image attachments """
 
@@ -84,8 +98,10 @@ def get_content(entry: feedparser.util.FeedParserDict) -> typing.Tuple[str, typi
         html = ''
     soup = BeautifulSoup(html, features="html.parser")
     images = [
-        urllib.parse.urljoin(entry.link,
-                             img.get('src', ''))  # type:ignore
+        (urllib.parse.urljoin(entry.link,
+                              img.get('src', '')),  # type:ignore
+         parse_int(img.get('width')),  # type:ignore
+         parse_int(img.get('height')))  # type:ignore
         for img in soup.find_all('img', src=True)]
 
     # convert the text (summary priority)
@@ -185,7 +201,7 @@ class DiscordRSS:
         if data.bozo:
             LOGGER.warning("Got error parsing %s: %s (%d)",
                            feed.feed_url,
-                           data.error, data.status)
+                           data.get('error'), data.status)
             return
 
         for entry in data.entries:
@@ -208,10 +224,46 @@ class DiscordRSS:
                 except Exception as error:  # pylint:disable=broad-exception-caught
                     LOGGER.exception(
                         "Got error processing entry %s: %s", entry.link, error)
-                    row['last_exception'] = {
-                        'error': error,
+                    if 'errors' not in row:
+                        row['errors'] = []
+                    row['errors'].append({
+                        'exception': str(error),
                         'time': now
-                    }
+                    })
+
+    @staticmethod
+    def attach_images(embed: dict,
+                      entry: feedparser.util.FeedParserDict,
+                      images: typing.List[ImageSpec]):
+        """ Attach media content to the embed payload """
+
+        def make_embed(item: dict):
+            return filter_undefined({
+                'url': urllib.parse.urljoin(entry.link, item['url']),
+                'width': int(item['width']) if 'width' in item else None,
+                'height': int(item['height']) if 'height' in item else None
+            })
+
+        if 'media_content' in entry:
+            for item in entry.media_content:
+                if item['medium'] == 'image':
+                    embed['image'] = make_embed(item)
+                    break
+
+        if 'media_thumbnail' in entry:
+            embed['thumbnail'] = make_embed(entry['media_thumbnail'][0])
+
+        for url, width, height in images:
+            if (width and width >= 600
+                    or height and height >= 600):
+                medium = 'image'
+            else:
+                medium = 'thumbnail'
+
+            if medium not in embed:
+                embed[medium] = make_embed(
+                    filter_undefined(
+                        {'url': url, 'width': width, 'height': height}))
 
     def process_entry(self, options: argparse.Namespace, config: FeedConfig,
                       feed: feedparser.util.FeedParserDict,
@@ -242,17 +294,7 @@ class DiscordRSS:
         }
 
         if config.include_image:
-            if 'media_content' in entry:
-                for item in entry.media_content:
-                    medium = item['medium']
-                    if medium in ('image', 'thumbnail') and medium not in embed:
-                        embed[item['medium']] = {
-                            'url': item['url'],
-                            'height': int(item['height']) if 'height' in item else None,
-                            'width': int(item['width']) if 'width' in item else None,
-                        }
-            elif images:
-                embed['thumbnail'] = {'url': images[0]}
+            self.attach_images(embed, entry, images)
 
         payload['embeds'] = [embed]
 
@@ -273,9 +315,9 @@ class DiscordRSS:
         LOGGER.warning("Got error %d: %s", request.status_code, request.text)
         if 'errors' not in row:
             row['errors'] = []
-        row['errors'].push({'code': request.status_code,
-                            'text': request.text,
-                            'when': datetime.datetime.now().timestamp()})
+        row['errors'].append({'code': request.status_code,
+                              'text': request.text,
+                              'when': datetime.datetime.now().timestamp()})
         return False
 
 
