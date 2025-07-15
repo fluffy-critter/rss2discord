@@ -146,7 +146,8 @@ class DiscordRSS:
                                     self.database_file)
                         self.database = {
                             line.strip(): {
-                                'last_seen': datetime.datetime.now().timestamp()
+                                'last_seen': datetime.datetime.now().timestamp(),
+                                'sent': True
                             }
                             for line in dbtext.splitlines()}
             except FileNotFoundError:
