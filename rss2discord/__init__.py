@@ -199,8 +199,8 @@ class DiscordRSS:
         """ Process a specific feed """
         try:
             req = requests.get(feed.feed_url, timeout=30)
-        except requests.exceptions.Timeout:
-            LOGGER.warning("%s: timed out", feed.feed_url)
+        except requests.RequestException as error:
+            LOGGER.warning("%s: got exception: %s", feed.feed_url, error)
             return
 
         data = feedparser.parse(req.text)
