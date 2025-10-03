@@ -197,7 +197,13 @@ class DiscordRSS:
 
     def process_feed(self, options: argparse.Namespace, feed: FeedConfig):
         """ Process a specific feed """
-        data = feedparser.parse(feed.feed_url)
+        try:
+            req = requests.get(feed.feed_url, timeout=30)
+        except requests.exceptions.Timeout:
+            LOGGER.warning("%s: timed out", feed.feed_url)
+            return
+
+        data = feedparser.parse(req.text)
 
         if data.bozo:
             LOGGER.warning("Got error parsing %s: %s (%d)",
