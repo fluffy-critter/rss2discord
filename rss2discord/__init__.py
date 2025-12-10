@@ -197,10 +197,40 @@ class DiscordRSS:
 
     def process_feed(self, options: argparse.Namespace, feed: FeedConfig):
         """ Process a specific feed """
+        if 'feeds' not in self.database:
+            self.database['feeds'] = {}
+
+        if feed.feed_url not in self.database['feeds']:
+            self.database['feeds'][feed.feed_url] = {}
+        feed_db = self.database['feeds'][feed.feed_url]
+
+        last_headers = feed_db.get('last_headers', {})
+        req_headers = {
+            'User-Agent': f'rss2discord/{__version__.__version__}; +https://github.com/fluffy-critter/rss2discord/'
+        }
+
+        for header_in, header_out in (
+            ('ETag', 'If-None-Match'),
+            ('Last-Modified', 'If-Modified-Since'),
+            ):
+            if header_in in last_headers:
+                req_headers[header_out] = last_headers[header_in]
+
         try:
-            req = requests.get(feed.feed_url, timeout=30)
+            req = requests.get(feed.feed_url, headers=req_headers, timeout=30)
         except requests.RequestException as error:
             LOGGER.warning("%s: got exception: %s", feed.feed_url, error)
+            return
+
+        feed_db.update(**{
+            'last_checked': datetime.datetime.now().timestamp(),
+            'last_status_code': req.status_code,
+            'last_headers': req.headers,
+        })
+
+        if req.status_code not in (200, 304):
+            LOGGER.warning("%s: got status code %d\n%s",
+                           feed.feed_url, req.status_code, req.text)
             return
 
         data = feedparser.parse(req.text)
@@ -208,7 +238,7 @@ class DiscordRSS:
         if data.bozo:
             LOGGER.warning("Got error parsing %s: %s (%d)",
                            feed.feed_url,
-                           data.get('error'), data.status)
+                           data.get('error'), req.status_code)
             return
 
         for entry in data.entries:
