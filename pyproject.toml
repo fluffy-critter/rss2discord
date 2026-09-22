@@ -1,6 +1,6 @@
 [project]
 name = "rss2discord"
-version = "0.3.3"
+version = "0.4.0"
 description = "A bot for feeding RSS feeds to Discord channels"
 authors = [
     {name = "fluffy",email = "fluffy@beesbuzz.biz"}
