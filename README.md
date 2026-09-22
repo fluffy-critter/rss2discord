@@ -30,7 +30,8 @@ Then, for each webhook, create a `.json` file with the following format:
         "feed_url": "https://example.com/feed",
         "username": "Example Feed",
         "avatar_url": "https://example.com/image.png",
-        "include_image": true
+        "include_image": true,
+        "post_text": "<@&1272615804453785631>"
     }, {
         "feed_url": "https://example.com/another_feed",
         "avatar_url": "https://example.com/another_image.png",
@@ -50,10 +51,11 @@ The schema is pretty basic; at the top level, the following keys are supported:
 * `avatar_url`: An image to use as the post avatar (will default to the webhook's icon)
 * `include_summary`: Whether to put the feed's summary text into the preview (defaults to `true`)
 * `include_image`: Whether to include the primary entry image into the preview (defaults to `true`)
+* `content`: Text to include with the update (for e.g. `@notifications`)
 
 * `feeds`: A list of feeds to send to the channel. A feed can be just a URL, or it can be a configuration blob with the following values:
     * `feed_url`: The URL to the feed
-    * `username`, `avatar_url`, `include_summary`, `include_image`: Overrides the top-level configuration
+    * `username`, `avatar_url`, `include_summary`, `include_image`, `content`: Overrides the top-level configuration
 
 Only `webhook` is required, but `database` is *strongly* recommended.
 

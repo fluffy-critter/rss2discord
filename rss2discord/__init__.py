@@ -46,7 +46,14 @@ def parse_arguments(args=None):
 
 
 FeedConfig = collections.namedtuple(
-    'FeedConfig', ['feed_url', 'username', 'avatar_url', 'include_summary', 'include_image'])
+    'FeedConfig', [
+        'feed_url',
+        'username',
+        'avatar_url',
+        'include_summary',
+        'include_image',
+        'content'
+    ])
 
 
 def parse_config(config):
@@ -56,6 +63,7 @@ def parse_config(config):
                       config.get('avatar_url'),
                       config.get('include_summary', True),
                       config.get('include_image', True),
+                      config.get('content')
                       )
 
 
@@ -195,8 +203,9 @@ class DiscordRSS:
 
         self.flushdb(options)
 
-    def process_feed(self, options: argparse.Namespace, feed: FeedConfig):
+    def process_feed(self, options: argparse.Namespace, feed: FeedConfig) -> bool:
         """ Process a specific feed """
+        # pylint:disable=too-many-locals,too-many-branches,too-many-statements,too-many-return-statements
         if 'feeds' not in self.database:
             self.database['feeds'] = {}
 
@@ -206,13 +215,16 @@ class DiscordRSS:
 
         last_headers = feed_db.get('last_headers', {})
         req_headers = {
-            'User-Agent': f'rss2discord/{__version__.__version__}; +https://github.com/fluffy-critter/rss2discord/'
+            'User-Agent': '; '.join([
+                f'rss2discord/{__version__.__version__}',
+                '+https://github.com/fluffy-critter/rss2discord/'
+            ])
         }
 
         for header_in, header_out in (
             ('ETag', 'If-None-Match'),
             ('Last-Modified', 'If-Modified-Since'),
-            ):
+        ):
             if header_in in last_headers:
                 req_headers[header_out] = last_headers[header_in]
 
@@ -220,7 +232,7 @@ class DiscordRSS:
             req = requests.get(feed.feed_url, headers=req_headers, timeout=30)
         except requests.RequestException as error:
             LOGGER.warning("%s: got exception: %s", feed.feed_url, error)
-            return
+            return False
 
         feed_db.update(**{
             'last_checked': datetime.datetime.now().timestamp(),
@@ -231,7 +243,7 @@ class DiscordRSS:
         if req.status_code not in (200, 304):
             LOGGER.warning("%s: got status code %d\n%s",
                            feed.feed_url, req.status_code, req.text)
-            return
+            return False
 
         data = feedparser.parse(req.text)
 
@@ -239,15 +251,24 @@ class DiscordRSS:
             LOGGER.warning("Got error parsing %s: %s (%d)",
                            feed.feed_url,
                            data.get('error'), req.status_code)
-            return
+            return False
+
+        now = datetime.datetime.now().timestamp()
+
+        embeds: typing.List[dict] = []
+
+        payload = {'embeds': embeds}
+        for key in ('username', 'avatar_url', 'content'):
+            if val := getattr(feed, key):
+                payload[key] = val
+
+        update_rows = []
 
         for entry in data.entries:
             if entry.id not in self.database:
                 self.database[entry.id] = {}
             row = self.database[entry.id]
             row['url'] = entry.link
-
-            now = datetime.datetime.now().timestamp()
             row['last_seen'] = now
 
             if not row.get('sent'):
@@ -256,8 +277,10 @@ class DiscordRSS:
                 try:
                     if options.populate:
                         row['sent'] = True
-                    elif self.process_entry(options, feed, data.feed, entry, row):
-                        row['sent'] = now
+                    elif embed := self.process_entry(feed, data.feed, entry):
+                        embeds.append(embed)
+                        update_rows.append(row)
+
                 except Exception as error:  # pylint:disable=broad-exception-caught
                     LOGGER.exception(
                         "Got error processing entry %s: %s", entry.link, error)
@@ -267,6 +290,36 @@ class DiscordRSS:
                         'exception': str(error),
                         'time': now
                     })
+
+        if not embeds:
+            LOGGER.info("Empty payload; not sending update: %s", payload)
+            return False
+
+        if options.dry_run:
+            LOGGER.info("Dry-run; not sending update: %s", payload)
+            return False
+
+        LOGGER.debug("Posting update: %s", payload)
+        request = requests.post(self.webhook,
+                                headers={'Content-Type': 'application/json'},
+                                json=payload,
+                                timeout=30)
+
+        if request.status_code // 100 == 2:
+            LOGGER.debug("Success: %d", request.status_code)
+            for row in update_rows:
+                row['sent'] = now
+            return True
+
+        LOGGER.warning("Got error %d: %s", request.status_code, request.text)
+        for row in update_rows:
+            if 'errors' not in row:
+                row['errors'] = []
+            row['errors'].append({'code': request.status_code,
+                                  'text': request.text,
+                                  'when': now})
+
+        return True
 
     @staticmethod
     def attach_images(embed: dict,
@@ -302,18 +355,11 @@ class DiscordRSS:
                     filter_undefined(
                         {'url': url, 'width': width, 'height': height}))
 
-    def process_entry(self, options: argparse.Namespace, config: FeedConfig,
+    def process_entry(self, config: FeedConfig,
                       feed: feedparser.util.FeedParserDict,
-                      entry: feedparser.util.FeedParserDict,
-                      row: dict) -> bool:
+                      entry: feedparser.util.FeedParserDict) -> dict:
         """ Process a feed entry; returns if it was successful """
         # pylint:disable=too-many-arguments,too-many-positional-arguments
-        payload = {}
-        if config.username:
-            payload['username'] = config.username
-        if config.avatar_url:
-            payload['avatar_url'] = config.avatar_url
-
         md_text, images = get_content(entry)
 
         text = f'## [{to_markdown(entry.title)}]({entry.link})'
@@ -333,29 +379,7 @@ class DiscordRSS:
         if config.include_image:
             self.attach_images(embed, entry, images)
 
-        payload['embeds'] = [embed]
-
-        if options.dry_run:
-            LOGGER.info("Dry-run; not sending entry: %s", payload)
-            return False
-
-        LOGGER.debug("Posting entry: %s", payload)
-        request = requests.post(self.webhook,
-                                headers={'Content-Type': 'application/json'},
-                                json=payload,
-                                timeout=30)
-
-        if request.status_code // 100 == 2:
-            LOGGER.debug("Success: %d", request.status_code)
-            return True
-
-        LOGGER.warning("Got error %d: %s", request.status_code, request.text)
-        if 'errors' not in row:
-            row['errors'] = []
-        row['errors'].append({'code': request.status_code,
-                              'text': request.text,
-                              'when': datetime.datetime.now().timestamp()})
-        return False
+        return embed
 
 
 def main():
