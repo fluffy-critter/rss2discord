@@ -31,7 +31,7 @@ Then, for each webhook, create a `.json` file with the following format:
         "username": "Example Feed",
         "avatar_url": "https://example.com/image.png",
         "include_image": true,
-        "post_text": "<@&1272615804453785631>"
+        "content": "<@&1272615804453785631>"
     }, {
         "feed_url": "https://example.com/another_feed",
         "avatar_url": "https://example.com/another_image.png",
