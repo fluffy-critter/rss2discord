@@ -9,13 +9,13 @@ import re
 import typing
 import urllib.parse
 
-import atomicwrites
 import feedparser
+import filelock
 import html_to_markdown
 import requests
 from bs4 import BeautifulSoup
 
-from . import __version__, limits
+from . import __version__, limits, model
 
 LOG_LEVELS = [logging.WARNING, logging.INFO, logging.DEBUG]
 LOGGER = logging.getLogger(__name__)
@@ -39,8 +39,11 @@ def parse_arguments(args=None):
     parser.add_argument("--version", action="version",
                         version=f"%(prog)s {__version__.__version__}")
     parser.add_argument("--max-age", '-m', type=int,
-                        help="Maximum age of items to keep in the database" +
+                        help="Maximum age of items to keep in the database, in days" +
                         " (0 to keep forever)", default=30)
+    parser.add_argument("--max-count", '-c', type=int,
+                        help="Maximum number of items to send per post",
+                        default=limits.MAX_EMBEDS)
 
     return parser.parse_args(args)
 
@@ -148,85 +151,37 @@ class DiscordRSS:
         self.feeds = [defaults._replace(feed_url=feed) if isinstance(feed, str)
                       else defaults._replace(**feed)
                       for feed in config['feeds']]
-        self.database_file = config.get('database', '')
-        self.database = {}
+        self.database = model.Database(config['database'])
 
         LOGGER.debug("Initialized RSS agent; feeds=%s database=%s",
                      self.feeds,
-                     self.database_file)
-
-        if self.database_file:
-            try:
-                with open(self.database_file, 'r', encoding='utf-8') as file:
-                    dbtext = file.read()
-                    try:
-                        self.database = json.loads(dbtext)
-                    except json.decoder.JSONDecodeError:
-                        # convert old db format to JSON
-                        LOGGER.info("Converting old-format database %s",
-                                    self.database_file)
-                        self.database = {
-                            line.strip(): {
-                                'last_seen': datetime.datetime.now().timestamp(),
-                                'sent': True
-                            }
-                            for line in dbtext.splitlines()}
-            except FileNotFoundError:
-                LOGGER.info("Database file %s not found, will create later",
-                            self.database_file)
-
-    def flushdb(self, options: argparse.Namespace):
-        """ flush the database to storage """
-        if options.max_age > 0:
-            count = len(self.database)
-
-            cutoff = (datetime.datetime.now() -
-                      datetime.timedelta(days=options.max_age)).timestamp()
-
-            LOGGER.debug("now=%d cutoff=%d",
-                         datetime.datetime.now().timestamp(),
-                         cutoff)
-
-            self.database = {
-                item: data for item, data in self.database.items()
-                if 'last_seen' in data and data['last_seen'] > cutoff
-            }
-            LOGGER.info("Purged %d old items from database",
-                        count - len(self.database))
-
-        if self.database_file and not options.dry_run:
-            LOGGER.debug("Writing database %s", self.database_file)
-            with atomicwrites.atomic_write(self.database_file,
-                                           encoding='utf-8',
-                                           overwrite=True) as file:
-                json.dump(self.database, file, indent=3)
-                LOGGER.info("Saved database %s with %d items",
-                            self.database_file, len(self.database))
+                     self.database.path)
 
     def process(self, options: argparse.Namespace):
         """ Process all of the configured feeds """
+        lock = filelock.FileLock(self.database.path + '.lock')
+        with lock:
+            self.database.load()
 
-        for feed in self.feeds:
-            LOGGER.debug("Processing feed %s", feed.feed_url)
-            try:
-                self.process_feed(options, feed)
-            except Exception as error:  # pylint:disable=broad-exception-caught
-                LOGGER.exception(
-                    "Got error processing feed %s: %s", feed.feed_url, error)
+            for feed in self.feeds:
+                LOGGER.debug("Processing feed %s", feed.feed_url)
+                try:
+                    self.process_feed(options, feed)
+                    if not options.dry_run:
+                        self.database.save()
+                except Exception as error:  # pylint:disable=broad-exception-caught
+                    LOGGER.exception(
+                        "Got error processing feed %s: %s", feed.feed_url, error)
 
-        self.flushdb(options)
+            if options.max_age > 0 and self.database.purge(options.max_age):
+                self.database.save()
 
     def process_feed(self, options: argparse.Namespace, feed: FeedConfig) -> bool:
         """ Process a specific feed """
         # pylint:disable=too-many-locals,too-many-branches,too-many-statements,too-many-return-statements
-        if 'feeds' not in self.database:
-            self.database['feeds'] = {}
-
-        if feed.feed_url not in self.database['feeds']:
-            self.database['feeds'][feed.feed_url] = {}
-        feed_db = self.database['feeds'][feed.feed_url]
-
+        feed_db = self.database.get_feed(feed.feed_url)
         last_headers = feed_db.get('last_headers', {})
+
         req_headers = {
             'User-Agent': '; '.join([
                 f'rss2discord/{__version__.__version__}',
@@ -234,14 +189,17 @@ class DiscordRSS:
             ])
         }
 
-        for header_in, header_out in (
-            ('ETag', 'If-None-Match'),
-            ('Last-Modified', 'If-Modified-Since'),
-        ):
-            if header_in in last_headers:
-                req_headers[header_out] = last_headers[header_in]
+        # If there aren't any pending entries, use the cache check
+        if not feed_db.get('has_pending', False):
+            for header_in, header_out in (
+                ('ETag', 'If-None-Match'),
+                ('Last-Modified', 'If-Modified-Since'),
+            ):
+                if header_in.casefold() in last_headers:
+                    req_headers[header_out] = last_headers[header_in.casefold()]
 
         try:
+            LOGGER.debug("Requesting %s with %s", feed.feed_url, req_headers)
             req = requests.get(feed.feed_url, headers=req_headers, timeout=30)
         except requests.RequestException as error:
             LOGGER.error("%s: got exception: %s", feed.feed_url, error)
@@ -250,10 +208,14 @@ class DiscordRSS:
         feed_db.update(**{
             'last_checked': datetime.datetime.now().timestamp(),
             'last_status_code': req.status_code,
-            'last_headers': req.headers,
+            'last_headers': {name.casefold(): value for name, value in req.headers.items()},
         })
 
-        if req.status_code not in (200, 304):
+        if req.status_code == 304:
+            LOGGER.info("%s: Feed unchanged", feed.feed_url)
+            return True
+
+        if req.status_code != 200:
             LOGGER.error("%s: got status code %d\n%s",
                          feed.feed_url, req.status_code, req.text)
             return False
@@ -283,19 +245,20 @@ class DiscordRSS:
 
         update_rows = []
 
+        pending = False
+
         for entry in data.entries:
-            if len(embeds) >= limits.MAX_EMBEDS:
+            if len(embeds) >= options.max_count:
                 LOGGER.info("Stopping at %d entries", len(embeds))
+                pending = True
                 break
 
-            if entry.id not in self.database:
-                self.database[entry.id] = {}
-            row = self.database[entry.id]
+            row = self.database.get_item(feed_db, entry.id)
             row['url'] = entry.link
             row['last_seen'] = now
 
             if not row.get('sent'):
-                LOGGER.info("Found new entry: %s", entry.id)
+                LOGGER.info("Found unsent entry: %s", entry.id)
 
                 try:
                     if options.populate:
@@ -310,6 +273,7 @@ class DiscordRSS:
                                 "Could not add entry %s; will retry later (%s)",
                                 entry.link,
                                 error)
+                            pending = True
                             embeds.pop()
 
                 except Exception as error:  # pylint:disable=broad-exception-caught
@@ -339,20 +303,22 @@ class DiscordRSS:
                                 json=payload,
                                 timeout=30)
 
-        if request.status_code // 100 == 2:
-            LOGGER.debug("Success: %d", request.status_code)
+        if request.status_code // 100 != 2:
+            LOGGER.warning("Got error %d: %s",
+                           request.status_code, request.text)
             for row in update_rows:
-                row['sent'] = now
-            return True
+                if 'errors' not in row:
+                    row['errors'] = []
+                row['errors'].append({'code': request.status_code,
+                                      'text': request.text,
+                                      'when': now})
+            return False
 
-        LOGGER.warning("Got error %d: %s", request.status_code, request.text)
+        LOGGER.debug("Success: %d", request.status_code)
         for row in update_rows:
-            if 'errors' not in row:
-                row['errors'] = []
-            row['errors'].append({'code': request.status_code,
-                                  'text': request.text,
-                                  'when': now})
+            row['sent'] = now
 
+        feed_db['has_pending'] = pending
         return True
 
     @staticmethod

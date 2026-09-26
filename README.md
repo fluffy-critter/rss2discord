@@ -45,19 +45,18 @@ Then, for each webhook, create a `.json` file with the following format:
 
 The schema is pretty basic; at the top level, the following keys are supported:
 
-* `webhook`: the webhook URL (i.e. the channel to post to)
-* `database`: The path to the file to store the information about already-seen entries
+* `webhook`: the webhook URL (i.e. the channel to post to); **REQUIRED**
+* `database`: The path to the file to store the information about already-seen entries; **REQUIRED**
 * `username`: The display name to use for the posting bot (will default to the webhook name)
 * `avatar_url`: An image to use as the post avatar (will default to the webhook's icon)
 * `include_summary`: Whether to put the feed's summary text into the preview (defaults to `true`)
 * `include_image`: Whether to include the primary entry image into the preview (defaults to `true`)
+* `summary_limit`: The limit of how many characters to include in the post text (defaults to 512)
 * `content`: Text to include with the update (for e.g. `@notifications`)
 
 * `feeds`: A list of feeds to send to the channel. A feed can be just a URL, or it can be a configuration blob with the following values:
     * `feed_url`: The URL to the feed
     * `username`, `avatar_url`, `include_summary`, `include_image`, `content`: Overrides the top-level configuration
-
-Only `webhook` is required, but `database` is *strongly* recommended.
 
 ## Running it
 
