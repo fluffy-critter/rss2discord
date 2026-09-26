@@ -15,7 +15,7 @@ import html_to_markdown
 import requests
 from bs4 import BeautifulSoup
 
-from . import __version__
+from . import __version__, limits
 
 LOG_LEVELS = [logging.WARNING, logging.INFO, logging.DEBUG]
 LOGGER = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ FeedConfig = collections.namedtuple(
         'avatar_url',
         'include_summary',
         'include_image',
+        'summary_limit',
         'content'
     ])
 
@@ -63,6 +64,7 @@ def parse_config(config):
                       config.get('avatar_url'),
                       config.get('include_summary', True),
                       config.get('include_image', True),
+                      config.get('summary_limit', 512),
                       config.get('content')
                       )
 
@@ -93,7 +95,10 @@ def filter_undefined(item: dict) -> dict:
     return {k: v for k, v in item.items() if v is not None}
 
 
-def get_content(entry: feedparser.util.FeedParserDict) -> typing.Tuple[str, typing.List[ImageSpec]]:
+def get_content(
+    entry: feedparser.util.FeedParserDict,
+    config: FeedConfig
+) -> typing.Tuple[str, typing.List[ImageSpec]]:
     """ Get the item content from some feed text; returns the Markdown and
     a list of image attachments """
 
@@ -119,6 +124,14 @@ def get_content(entry: feedparser.util.FeedParserDict) -> typing.Tuple[str, typi
         md_text = to_markdown(entry.content[0].value)
     else:
         md_text = ''
+
+    if len(md_text) > config.summary_limit:
+        # this could definitely be more efficient
+        lines = md_text.split('\n')
+        while len('\n'.join(lines)) > config.summary_limit:
+            lines.pop()
+        lines.append('…')
+        md_text = '\n'.join(lines)
 
     return md_text, images
 
@@ -231,7 +244,7 @@ class DiscordRSS:
         try:
             req = requests.get(feed.feed_url, headers=req_headers, timeout=30)
         except requests.RequestException as error:
-            LOGGER.warning("%s: got exception: %s", feed.feed_url, error)
+            LOGGER.error("%s: got exception: %s", feed.feed_url, error)
             return False
 
         feed_db.update(**{
@@ -241,16 +254,16 @@ class DiscordRSS:
         })
 
         if req.status_code not in (200, 304):
-            LOGGER.warning("%s: got status code %d\n%s",
-                           feed.feed_url, req.status_code, req.text)
+            LOGGER.error("%s: got status code %d\n%s",
+                         feed.feed_url, req.status_code, req.text)
             return False
 
         data = feedparser.parse(req.text)
 
         if data.bozo:
-            LOGGER.warning("Got error parsing %s: %s (%d)",
-                           feed.feed_url,
-                           data.get('error'), req.status_code)
+            LOGGER.error("Got error parsing %s: %s (%d)",
+                         feed.feed_url,
+                         data.get('error'), req.status_code)
             return False
 
         now = datetime.datetime.now().timestamp()
@@ -262,9 +275,19 @@ class DiscordRSS:
             if val := getattr(feed, key):
                 payload[key] = val
 
+        try:
+            limits.validate_payload(payload)
+        except limits.EmbedLimitError as error:
+            LOGGER.error("Base payload too large: %s", error)
+            return False
+
         update_rows = []
 
         for entry in data.entries:
+            if len(embeds) >= limits.MAX_EMBEDS:
+                LOGGER.info("Stopping at %d entries", len(embeds))
+                break
+
             if entry.id not in self.database:
                 self.database[entry.id] = {}
             row = self.database[entry.id]
@@ -279,7 +302,15 @@ class DiscordRSS:
                         row['sent'] = True
                     elif embed := self.process_entry(feed, data.feed, entry):
                         embeds.append(embed)
-                        update_rows.append(row)
+                        try:
+                            limits.validate_payload(payload)
+                            update_rows.append(row)
+                        except limits.EmbedLimitError as error:
+                            LOGGER.warning(
+                                "Could not add entry %s; will retry later (%s)",
+                                entry.link,
+                                error)
+                            embeds.pop()
 
                 except Exception as error:  # pylint:disable=broad-exception-caught
                     LOGGER.exception(
@@ -292,13 +323,16 @@ class DiscordRSS:
                     })
 
         if not embeds:
-            LOGGER.info("Empty payload; not sending update: %s", payload)
+            LOGGER.debug("%s: No entries to send", feed.feed_url)
             return False
 
         if options.dry_run:
-            LOGGER.info("Dry-run; not sending update: %s", payload)
+            LOGGER.info(
+                "%s: Dry-run; not sending update with %d entries", feed.feed_url, len(embeds))
             return False
 
+        LOGGER.info("%s: Sending message with %d entries",
+                    feed.feed_url, len(embeds))
         LOGGER.debug("Posting update: %s", payload)
         request = requests.post(self.webhook,
                                 headers={'Content-Type': 'application/json'},
@@ -360,7 +394,7 @@ class DiscordRSS:
                       entry: feedparser.util.FeedParserDict) -> dict:
         """ Process a feed entry; returns if it was successful """
         # pylint:disable=too-many-arguments,too-many-positional-arguments
-        md_text, images = get_content(entry)
+        md_text, images = get_content(entry, config)
 
         text = f'## [{to_markdown(entry.title)}]({entry.link})'
         if config.include_summary:
