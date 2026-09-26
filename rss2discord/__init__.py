@@ -129,12 +129,16 @@ def get_content(
         md_text = ''
 
     if len(md_text) > config.summary_limit:
+        LOGGER.debug("Text is %d bytes, truncating with readmore", len(md_text))
         # this could definitely be more efficient
         lines = md_text.split('\n')
-        while len('\n'.join(lines)) > config.summary_limit:
-            lines.pop()
-        lines.append('…')
-        md_text = '\n'.join(lines)
+        md_text = ''
+        for line in lines:
+            if len(line) + len(md_text) > config.summary_limit:
+                LOGGER.debug("cutting off at %d bytes", len(md_text))
+                md_text += f'\n-# [Read more...](<{entry.link}>)'
+                break
+            md_text += line + '\n'
 
     return md_text, images
 
@@ -365,7 +369,7 @@ class DiscordRSS:
 
         text = f'## [{to_markdown(entry.title)}]({entry.link})'
         if config.include_summary:
-            text += f'\n{md_text}\n-# [Read more...](<{entry.link}>)'
+            text += f'\n{md_text}'
 
         embed = {
             'type': 'rich',
