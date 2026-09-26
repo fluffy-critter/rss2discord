@@ -306,6 +306,7 @@ class DiscordRSS:
         if request.status_code // 100 != 2:
             LOGGER.warning("Got error %d: %s",
                            request.status_code, request.text)
+            feed_db['has_pending'] = True
             for row in update_rows:
                 if 'errors' not in row:
                     row['errors'] = []
