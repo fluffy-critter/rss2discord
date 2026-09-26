@@ -129,7 +129,8 @@ def get_content(
         md_text = ''
 
     if len(md_text) > config.summary_limit:
-        LOGGER.debug("Text is %d bytes, truncating with readmore", len(md_text))
+        LOGGER.debug(
+            "Text is %d bytes, truncating with readmore", len(md_text))
         # this could definitely be more efficient
         lines = md_text.split('\n')
         md_text = ''
