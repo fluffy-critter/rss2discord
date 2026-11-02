@@ -30,7 +30,7 @@ include = [
 
 [tool.poetry.group.dev.dependencies]
 autopep8 = "^2.3.2"
-pylint = "^3.3.7"
+pylint = "^4.0.9"
 mypy = "^1.16.1"
 types-requests = "^2.32.4.20250611"
 isort = "^6.0.1"
